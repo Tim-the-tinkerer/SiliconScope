@@ -174,6 +174,181 @@ final class MetricMathTests: XCTestCase {
         XCTAssertEqual(MetricMath.typicalANEPeakWatts(chipName: "Apple M4 Pro"), 10)
     }
 
+    func testM4FrequencyLaddersIgnoreHertzDomains() {
+        let ladders = [
+            ladder("voltage-states1-sram", [1020, 1296, 1608, 1920, 2256, 2424, 2592], kilohertz: true),
+            ladder("voltage-states5-sram", [1260, 4512], kilohertz: true),
+            ladder("voltage-states13-sram", [1260, 4512], kilohertz: true),
+            ladder("voltage-states8", [400, 2364], kilohertz: false),
+            ladder("voltage-states28", [801, 1602, 2004], kilohertz: false),
+            ladder("voltage-states9", [338, 1578], kilohertz: false),
+            ladder("voltage-states9-sram", [338, 1578], kilohertz: false),
+            ladder("voltage-states29", [1068], kilohertz: false),
+        ]
+        let classified = MetricMath.classifyFrequencyLadders(ladders)
+        XCTAssertEqual(classified.efficiency, [1020, 1296, 1608, 1920, 2256, 2424, 2592])
+        XCTAssertEqual(classified.performance, [1260, 4512])
+        XCTAssertEqual(classified.gpu, [338, 1578])
+    }
+
+    func testM1FrequencyLaddersStayInHertz() {
+        let classified = MetricMath.classifyFrequencyLadders([
+            ladder("voltage-states1", [600, 2064], kilohertz: false),
+            ladder("voltage-states5", [600, 3204], kilohertz: false),
+            ladder("voltage-states9", [396, 1278], kilohertz: false),
+        ])
+        XCTAssertEqual(classified.efficiency, [600, 2064])
+        XCTAssertEqual(classified.performance, [600, 3204])
+        XCTAssertEqual(classified.gpu, [396, 1278])
+    }
+
+    func testM4CoreIndexes() {
+        XCTAssertEqual(coreKey("ECPU000"), [0, 0, 0])
+        XCTAssertEqual(coreKey("ECPU030"), [0, 0, 3])
+        XCTAssertEqual(coreKey("PCPU000"), [0, 0, 0])
+        XCTAssertEqual(coreKey("PCPU040"), [0, 0, 4])
+        XCTAssertEqual(coreKey("PCPU100"), [0, 1, 0])
+        XCTAssertEqual(coreKey("PCPU140"), [0, 1, 4])
+        XCTAssertEqual(MetricMath.parseCoreID("PCPU140"), 4)
+        XCTAssertEqual(MetricMath.parseCoreID("ECPU7"), 7)
+    }
+
+    private func coreKey(_ channel: String) -> [Int] {
+        let key = MetricMath.sortKey(forCPUChannel: channel)
+        return [key.0, key.1, key.2]
+    }
+
+    func testFlattenM4CoresAreSequential() {
+        let performance = (0..<5).map { "PCPU1\($0)0" } + (0..<5).map { "PCPU0\($0)0" }
+        let pCores = MetricMath.flattenCores(
+            performance.map { (channel: $0, frequencyMHz: UInt32(0), scaledRatio: 0, activeRatio: 0) },
+            kind: .performance
+        )
+        XCTAssertEqual(pCores.map(\.coreID), Array(0..<10))
+        XCTAssertEqual(pCores.map(\.shortLabel), (0..<10).map { "P\($0)" })
+
+        let efficiency = ["ECPU030", "ECPU000", "ECPU020", "ECPU010"]
+        let eCores = MetricMath.flattenCores(
+            efficiency.map { (channel: $0, frequencyMHz: UInt32(0), scaledRatio: 0, activeRatio: 0) },
+            kind: .efficiency
+        )
+        XCTAssertEqual(eCores.map(\.coreID), [0, 1, 2, 3])
+        XCTAssertEqual(eCores.map(\.shortLabel), ["E0", "E1", "E2", "E3"])
+    }
+
+    func testParkedCoreReportsZeroFrequency() {
+        let parked = MetricMath.frequencyMetrics(
+            residencies: [
+                (name: "DOWN", value: 900),
+                (name: "IDLE", value: 100),
+                (name: "V0", value: 0),
+                (name: "V1", value: 0),
+            ],
+            frequenciesMHz: [1260, 4512]
+        )
+        XCTAssertEqual(parked.frequencyMHz, 0)
+        XCTAssertEqual(parked.activeRatio, 0)
+        XCTAssertEqual(parked.scaledRatio, 0)
+    }
+
+    func testAggregateClusterIgnoresAPoweredOffCluster() {
+        let asleep = (0..<5).map { core in
+            CoreSample(kind: .performance, dieID: 0, coreID: core, frequencyMHz: 1260, activeRatio: 0, scaledRatio: 0)
+        }
+        let awake = (5..<10).map { core in
+            CoreSample(kind: .performance, dieID: 0, coreID: core, frequencyMHz: 3200, activeRatio: 0.5, scaledRatio: 0.4)
+        }
+        let aggregate = MetricMath.aggregateCluster(asleep + awake, expectedCount: 10, minimumFrequencyMHz: 1260)
+        XCTAssertEqual(aggregate.frequencyMHz, 3200)
+        XCTAssertEqual(aggregate.activeRatio, 0.25, accuracy: 0.0001)
+
+        let idle = CoreSample(kind: .efficiency, dieID: 0, coreID: 0, frequencyMHz: 1020, activeRatio: 0, scaledRatio: 0)
+        XCTAssertEqual(MetricMath.aggregateCluster([idle], expectedCount: 4, minimumFrequencyMHz: 1020).frequencyMHz, 0)
+        XCTAssertEqual(MetricMath.aggregateCluster([], expectedCount: 4, minimumFrequencyMHz: 1020).frequencyMHz, 1020)
+    }
+
+    func testSleepingPowerRailDoesNotReportItsBin() {
+        let busy = MetricMath.powerHistogram([
+            (name: "0.250W", value: 1750),
+            (name: "1W", value: 401),
+        ])
+        let asleep = MetricMath.powerHistogram([(name: "  2W", value: 28)])
+        XCTAssertEqual(busy?.events, 2151)
+        XCTAssertEqual(busy?.weighted, 838.5)
+        XCTAssertEqual(asleep?.weighted, 56)
+        let watts = MetricMath.normalizedHistogramWatts([busy!, asleep!])
+        XCTAssertEqual(watts!, 894.5 / 2151, accuracy: 0.0001)
+        XCTAssertEqual(MetricMath.wattBin("0.250W"), 0.25)
+        XCTAssertEqual(MetricMath.wattBin("  2W"), 2)
+        XCTAssertNil(MetricMath.wattBin("DOWN"))
+        XCTAssertNil(MetricMath.powerHistogram([(name: "mJ", value: 10)]))
+        XCTAssertNil(MetricMath.normalizedHistogramWatts([]))
+        XCTAssertEqual(MetricMath.normalizedHistogramWatts([(weighted: 0, events: 0)]), 0)
+    }
+
+    func testSMCTemperatureNamesAndAverages() {
+        XCTAssertEqual(TemperatureName.title(for: "Tp1x"), "Performance core sensor")
+        XCTAssertEqual(TemperatureName.title(for: "Te04"), "Efficiency cluster sensor")
+        XCTAssertEqual(TemperatureName.title(for: "Tg05"), "GPU sensor")
+        XCTAssertEqual(TemperatureName.title(for: "TCMz"), "CPU die sensor")
+        XCTAssertEqual(TemperatureName.title(for: "TPD0"), "Power manager sensor")
+        XCTAssertEqual(TemperatureName.title(for: "Ts0P"), "SoC sensor")
+        XCTAssertEqual(TemperatureName.family(for: "Tp1x"), "Performance core")
+        XCTAssertEqual(TemperatureName.family(for: "Tg05"), "GPU")
+        XCTAssertEqual(TemperatureName.family(for: "TPD0"), "Power manager")
+        XCTAssertEqual(TemperatureName.role(for: "Tp1x"), .cpu)
+        XCTAssertEqual(TemperatureName.role(for: "Te04"), .cpu)
+        XCTAssertEqual(TemperatureName.role(for: "Tg05"), .gpu)
+        XCTAssertEqual(TemperatureName.role(for: "TPD0"), .other)
+        XCTAssertEqual(TemperatureName.role(for: "TVMD"), .other)
+        XCTAssertEqual(TemperatureName.role(for: "PMU TP3g"), .gpu)
+        XCTAssertEqual(TemperatureName.role(for: "PMU tdie1"), .other)
+        XCTAssertEqual(TemperatureGroup.group(forSensorName: "Tp1x"), .cpu)
+        XCTAssertEqual(TemperatureGroup.group(forSensorName: "TPD0"), .other)
+        XCTAssertFalse(TemperatureName.acceptsCelsius(-4))
+        XCTAssertFalse(TemperatureName.acceptsCelsius(2))
+        XCTAssertTrue(TemperatureName.acceptsCelsius(8))
+        XCTAssertTrue(TemperatureName.acceptsCelsius(150))
+        XCTAssertFalse(TemperatureName.acceptsCelsius(151))
+
+        let sensors = [
+            TemperatureSensor(id: "p1", name: "Tp1x", celsius: 70, group: .cpu),
+            TemperatureSensor(id: "p2", name: "Tp2a", celsius: 50, group: .cpu),
+            TemperatureSensor(id: "e1", name: "Te04", celsius: 40, group: .cpu),
+            TemperatureSensor(id: "e2", name: "Te05", celsius: 36, group: .cpu),
+            TemperatureSensor(id: "g1", name: "Tg01", celsius: 44, group: .gpu),
+            TemperatureSensor(id: "g2", name: "Tg02", celsius: 40, group: .gpu),
+            TemperatureSensor(id: "d1", name: "PMU tdie1", celsius: 48, group: .other),
+            TemperatureSensor(id: "pm", name: "TPD0", celsius: 39, group: .other),
+        ]
+        XCTAssertEqual(TemperatureName.cpuClusterAverage(sensors), 49)
+        XCTAssertEqual(TemperatureName.gpuAverage(sensors), 42)
+
+        let hid = [
+            TemperatureSensor(id: "p", name: "pACC MTR Temp Sensor1", celsius: 40, group: .cpu),
+            TemperatureSensor(id: "e", name: "eACC MTR Temp Sensor0", celsius: 30, group: .cpu),
+            TemperatureSensor(id: "tp", name: "Tp1x", celsius: 90, group: .cpu),
+            TemperatureSensor(id: "te", name: "Te04", celsius: 10, group: .cpu),
+            TemperatureSensor(id: "gpu", name: "GPU MTR Temp Sensor1", celsius: 33, group: .gpu),
+            TemperatureSensor(id: "tg", name: "Tg01", celsius: 44, group: .gpu),
+        ]
+        XCTAssertEqual(TemperatureName.cpuClusterAverage(hid), 35)
+        XCTAssertEqual(TemperatureName.gpuAverage(hid), 44)
+
+        let probes = [
+            TemperatureSensor(id: "g", name: "PMU TP3g", celsius: 55, group: .gpu),
+            TemperatureSensor(id: "d", name: "PMU tdie1", celsius: 48, group: .other),
+            TemperatureSensor(id: "d2", name: "PMU tdie2", celsius: 50, group: .other),
+            TemperatureSensor(id: "n", name: "NAND CH0 temp", celsius: 33, group: .other),
+        ]
+        XCTAssertEqual(TemperatureName.gpuAverage(probes), 55)
+        XCTAssertEqual(TemperatureName.cpuClusterAverage(probes), 49)
+    }
+
+    private func ladder(_ key: String, _ megahertz: [UInt32], kilohertz: Bool) -> MetricMath.FrequencyLadder {
+        MetricMath.FrequencyLadder(key: key, megahertz: megahertz, kilohertzEncoded: kilohertz)
+    }
+
     func testFlattenUltraCores() {
         let cores = MetricMath.flattenCores(
             [

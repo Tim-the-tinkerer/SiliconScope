@@ -98,11 +98,20 @@ final class IOReportSampler {
                 || channel.hasPrefix("ANE")
                 || channel.hasSuffix("CPU Energy")
         }
-        if group == "PMP" && subgroup == "Energy Counters" {
+        if group == "PMP" && (subgroup == "Energy Counters" || subgroup == "Energy") {
             return channel == "ANE" || channel == "DRAM" || channel == "GPU SRAM"
-                || channel == "ECPU" || channel == "PCPU"
+                || isCPUEnergyChannel(channel)
         }
         return false
+    }
+
+    /// Cluster rails on M4 are `EACC0` / `PACC1` / `EACC0 SRAM`, not the older `ECPU` / `PCPU` counters.
+    private static func isCPUEnergyChannel(_ channel: String) -> Bool {
+        let name = channel.uppercased()
+        if name.contains("AGX") || name.contains("GPU") || name.contains("ANE") || name.contains("DRAM") {
+            return false
+        }
+        return name.contains("EACC") || name.contains("PACC") || name.contains("ECPU") || name.contains("PCPU")
     }
 
     private static func parse(delta: CFDictionary, elapsed: TimeInterval, hardware: HardwareProfile) -> IOReportReading {
@@ -113,6 +122,7 @@ final class IOReportSampler {
         var cpuAggregate: Double?
         var cpuParts: Double?
         var cpuPMP: Double?
+        var cpuHistograms: [(weighted: Double, events: Double)] = []
         var aneModel: Double?
         var anePMP: Double?
         var gpuLockedToPrimary = false
@@ -159,26 +169,33 @@ final class IOReportSampler {
                 } else if channel.hasPrefix("ANE") {
                     aneModel = (aneModel ?? 0) + watts
                 }
-            } else if group == "PMP" && subgroup == "Energy Counters" {
-                guard let watts = energyWatts(dict, unit: unit, elapsed: elapsed) else { continue }
-                switch channel {
-                case "ANE":
-                    anePMP = (anePMP ?? 0) + watts
-                case "DRAM":
-                    reading.ramPowerWatts += watts
-                    reading.sawDRAM = true
-                case "GPU SRAM":
-                    reading.gpuSRAMPowerWatts += watts
-                    reading.sawGPUSRAM = true
-                case "ECPU", "PCPU":
-                    cpuPMP = (cpuPMP ?? 0) + watts
-                default: break
+            } else if group == "PMP" && (subgroup == "Energy Counters" || subgroup == "Energy") {
+                if isCPUEnergyChannel(channel) {
+                    let states = residencies(dict)
+                    if let histogram = MetricMath.powerHistogram(states) {
+                        cpuHistograms.append(histogram)
+                    } else if let watts = energyWatts(dict, unit: unit, elapsed: elapsed) {
+                        cpuPMP = (cpuPMP ?? 0) + watts
+                    }
+                } else if let watts = energyWatts(dict, unit: unit, elapsed: elapsed) {
+                    switch channel {
+                    case "ANE":
+                        anePMP = (anePMP ?? 0) + watts
+                    case "DRAM":
+                        reading.ramPowerWatts += watts
+                        reading.sawDRAM = true
+                    case "GPU SRAM":
+                        reading.gpuSRAMPowerWatts += watts
+                        reading.sawGPUSRAM = true
+                    default: break
+                    }
                 }
             }
         }
 
-        reading.cpuPowerWatts = MetricMath.preferredWatts([cpuAggregate, cpuParts, cpuPMP])
-        reading.sawCPUEnergy = cpuAggregate != nil || cpuParts != nil || cpuPMP != nil
+        let histogramWatts = MetricMath.normalizedHistogramWatts(cpuHistograms)
+        reading.cpuPowerWatts = MetricMath.preferredWatts([cpuAggregate, cpuParts, histogramWatts, cpuPMP])
+        reading.sawCPUEnergy = cpuAggregate != nil || cpuParts != nil || histogramWatts != nil || cpuPMP != nil
         reading.anePowerWatts = MetricMath.preferredWatts([aneModel, anePMP])
         reading.sawANEEnergy = aneModel != nil || anePMP != nil
         reading.gpuPowerWatts = max(0, reading.gpuPowerWatts)

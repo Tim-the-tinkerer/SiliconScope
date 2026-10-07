@@ -6,9 +6,10 @@ enum TemperatureSampler {
     private typealias ClientCreate = @convention(c) (CFAllocator?) -> Unmanaged<CFTypeRef>?
     private typealias SetMatching = @convention(c) (CFTypeRef?, CFDictionary?) -> Int32
     private typealias CopyServices = @convention(c) (CFTypeRef?) -> Unmanaged<CFArray>?
-    private typealias CopyProperty = @convention(c) (CFTypeRef?, CFString?) -> Unmanaged<CFString>?
+    private typealias CopyProperty = @convention(c) (CFTypeRef?, CFString?) -> Unmanaged<CFTypeRef>?
     private typealias CopyEvent = @convention(c) (CFTypeRef?, Int64, Int32, Int64) -> Unmanaged<CFTypeRef>?
     private typealias EventFloat = @convention(c) (CFTypeRef?, Int64) -> Double
+    private typealias Schedule = @convention(c) (CFTypeRef?, CFRunLoop?, CFString?) -> Void
 
     private static let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_LOCAL)
     private static let create: ClientCreate? = symbol("IOHIDEventSystemClientCreate")
@@ -17,6 +18,7 @@ enum TemperatureSampler {
     private static let copyProperty: CopyProperty? = symbol("IOHIDServiceClientCopyProperty")
     private static let copyEvent: CopyEvent? = symbol("IOHIDServiceClientCopyEvent")
     private static let eventFloat: EventFloat? = symbol("IOHIDEventGetFloatValue")
+    private static let schedule: Schedule? = symbol("IOHIDEventSystemClientScheduleWithRunLoop")
 
     private static let appleVendorPage: Int32 = 0xff00
     private static let temperatureUsage: Int32 = 0x0005
@@ -31,6 +33,7 @@ enum TemperatureSampler {
     private static let minInterval: TimeInterval = 3
     private static var last: (report: Report, at: Date)?
     private static var client: CFTypeRef?
+    private static var didSchedule = false
     private static let lock = NSLock()
 
     static func sample(force: Bool = false) -> Report {
@@ -46,43 +49,51 @@ enum TemperatureSampler {
     }
 
     private static func read() -> Report {
-        guard let copyServices, let copyProperty, let copyEvent, let eventFloat,
-              let client = clientOrCreate()
-        else { return Report(cpu: nil, gpu: nil, sensors: []) }
+        let sensors = readHID() + SMCTemperature.sample()
+        return Report(
+            cpu: TemperatureName.cpuClusterAverage(sensors),
+            gpu: TemperatureName.gpuAverage(sensors),
+            sensors: sensors
+        )
+    }
 
-        guard let services = copyServices(client)?.takeRetainedValue() else {
-            return Report(cpu: nil, gpu: nil, sensors: [])
-        }
+    /// HID diodes (`pACC`, `eACC`, `GPU MTR`) when the chip publishes them. M4 Pro and M2 Pro publish PMU copies instead, often three times, plus a `tcal` constant that is not a live temperature.
+    private static func readHID() -> [TemperatureSensor] {
+        guard let copyServices, let copyEvent, let eventFloat, let client = clientOrCreate() else { return [] }
+        guard let services = copyServices(client)?.takeRetainedValue() else { return [] }
 
-        var sensors: [TemperatureSensor] = []
-        var usedNames: [String: Int] = [:]
+        var valuesByName: [String: [Double]] = [:]
+        var order: [String] = []
         let count = CFArrayGetCount(services)
         for index in 0..<count {
             guard let raw = CFArrayGetValueAtIndex(services, index) else { continue }
             let service = Unmanaged<AnyObject>.fromOpaque(raw).takeUnretainedValue() as CFTypeRef
-            let product: String
-            if let unmanaged = copyProperty(service, "Product" as CFString) {
-                product = unmanaged.takeRetainedValue() as String
-            } else {
-                product = ""
-            }
             guard let event = copyEvent(service, temperatureEvent, 0, 0)?.takeRetainedValue() else { continue }
             let value = eventFloat(event, temperatureEvent << 16)
-            guard value > 0, value <= 150 else { continue }
-            let base = product.isEmpty ? "Sensor \(index + 1)" : product
-            let seen = (usedNames[base] ?? 0) + 1
-            usedNames[base] = seen
-            let name = seen == 1 ? base : "\(base) \(seen)"
-            sensors.append(TemperatureSensor(
+            guard value.isFinite, TemperatureName.acceptsCelsius(value) else { continue }
+            let product = stringProperty(service, "Product") ?? ""
+            if product.lowercased().contains("tcal") { continue }
+            let name = product.isEmpty ? "Sensor \(index + 1)" : product
+            if valuesByName[name] == nil { order.append(name) }
+            valuesByName[name, default: []].append(value)
+        }
+
+        return order.map { name in
+            TemperatureSensor(
                 id: name,
                 name: name,
-                celsius: value,
-                group: TemperatureGroup.group(forSensorName: base)
-            ))
+                celsius: median(valuesByName[name] ?? []),
+                group: TemperatureGroup.group(forSensorName: name)
+            )
         }
-        let cpuValues = sensors.filter { $0.group == .cpu }.map(\.celsius)
-        let gpuValues = sensors.filter { $0.group == .gpu }.map(\.celsius)
-        return Report(cpu: average(cpuValues), gpu: average(gpuValues), sensors: sensors)
+    }
+
+    /// `IOHIDServiceClientCopyProperty` returns a number for usage fields. Forcing that to `String` crashes.
+    private static func stringProperty(_ service: CFTypeRef, _ key: String) -> String? {
+        guard let copyProperty, let unmanaged = copyProperty(service, key as CFString) else { return nil }
+        let value = unmanaged.takeRetainedValue() as AnyObject
+        guard CFGetTypeID(value) == CFStringGetTypeID() else { return nil }
+        return value as? String
     }
 
     private static func clientOrCreate() -> CFTypeRef? {
@@ -93,13 +104,23 @@ enum TemperatureSampler {
             "PrimaryUsage" as CFString: temperatureUsage,
         ]
         _ = setMatching(made, matching as CFDictionary)
+        if !didSchedule {
+            didSchedule = true
+            schedule?(made, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+            CFRunLoopRunInMode(.defaultMode, 0.2, false)
+        }
         client = made
         return made
     }
 
-    private static func average(_ values: [Double]) -> Double? {
-        guard !values.isEmpty else { return nil }
-        return values.reduce(0, +) / Double(values.count)
+    private static func median(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        guard !sorted.isEmpty else { return 0 }
+        let middle = sorted.count / 2
+        if sorted.count.isMultiple(of: 2) {
+            return (sorted[middle - 1] + sorted[middle]) / 2
+        }
+        return sorted[middle]
     }
 
     private static func symbol<T>(_ name: String) -> T? {

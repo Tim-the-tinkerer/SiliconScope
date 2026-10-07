@@ -64,7 +64,7 @@ struct HardwareView: View {
                 freqPanel("GPU DVFS", hw.gpuFrequenciesMHz, AppTheme.gpu)
             }
 
-            Text("CPU, GPU, and Neural Engine watts come from the private IOReport Energy Model — the same source `powermetrics` uses — without requiring an administrator password. ANE activity percent is estimated (power / typical peak), not occupancy. Temperature uses HID thermal sensors every few seconds when the OS exposes them. Process lists are sampled only while that page is open.")
+            Text("CPU watts come from the IOReport Energy Model when that counter moves, and from the PMP energy histograms when it stays at zero. GPU and Neural Engine watts come from the Energy Model, the same source powermetrics uses, without an administrator password. ANE activity percent is estimated (power / typical peak), not occupancy. Temperature uses HID diodes when the chip publishes them, and SMC keys for the core and GPU sensors on chips that do not, including M4 Pro and M2 Pro. Readings refresh every few seconds. Process lists are sampled only while that page is open.")
                 .font(AppTheme.small)
                 .foregroundStyle(AppTheme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)

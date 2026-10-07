@@ -239,13 +239,11 @@ public enum TemperatureGroup: String, Sendable, Equatable, CaseIterable {
     }
 
     public static func group(forSensorName name: String) -> TemperatureGroup {
-        if name.contains("pACC") || name.contains("eACC") || name.hasPrefix("CPU") {
-            return .cpu
+        switch TemperatureName.role(for: name) {
+        case .cpu: return .cpu
+        case .gpu: return .gpu
+        case .other: return .other
         }
-        if name.contains("GPU") || name.contains("AGX") {
-            return .gpu
-        }
-        return .other
     }
 }
 

@@ -18,7 +18,7 @@ if [[ ! -f Assets/AppIcon.icns ]]; then
     swift Scripts/GenerateAppIcon.swift
 fi
 
-echo "Building Silicon Scope 1.1.6 (release)..."
+echo "Building Silicon Scope 1.1.7 (release)..."
 swift build -c release
 
 BIN=".build/release/SiliconScope"
@@ -47,7 +47,7 @@ codesign --force --sign - --identifier "${BUNDLE_ID}" --timestamp=none "${APP}"
 plutil -lint "${APP}/Contents/Info.plist" >/dev/null
 codesign --verify --verbose=2 "${APP}" 2>/dev/null || codesign --verify "${APP}"
 
-echo "Done: ${APP} (v1.1.6)"
+echo "Done: ${APP} (v1.1.7)"
 if [[ "${LAUNCH}" == "true" ]]; then
     pkill -x SiliconScope 2>/dev/null || true
     sleep 0.2

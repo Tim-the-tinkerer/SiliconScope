@@ -111,9 +111,6 @@ public enum HardwareInfo {
         var gpu: [UInt32] = []
     }
 
-    /// CPU clusters peak at 2 GHz or more. GPU, ANE, and fabric ladders published beside them stay under that.
-    private static let cpuClusterMinimumPeakMHz: UInt32 = 2_000
-
     private static func dvfsTables() -> DVFSTables {
         var tables = DVFSTables()
         var iterator: io_iterator_t = 0
@@ -146,61 +143,24 @@ public enum HardwareInfo {
     }
 
     private static func classifyDVFS(_ dict: NSDictionary) -> DVFSTables {
-        var cpu: [[UInt32]] = []
-        var gpuSRAM: [UInt32] = []
-        var gpuPlain: [UInt32] = []
-        var gpuFallback: [UInt32] = []
-        var gpuFallbackPeak: UInt32 = 0
-
+        var ladders: [MetricMath.FrequencyLadder] = []
         for case let key as String in dict.allKeys where key.hasPrefix("voltage-states") {
-            let ladder = dvfsLadder(from: dict[key])
-            guard let peak = ladder.max() else { continue }
-            if peak >= cpuClusterMinimumPeakMHz {
-                cpu.append(ladder)
-                continue
-            }
-            if key == "voltage-states9-sram" {
-                gpuSRAM = ladder
-            } else if key == "voltage-states9" {
-                gpuPlain = ladder
-            } else if peak > gpuFallbackPeak {
-                gpuFallback = ladder
-                gpuFallbackPeak = peak
-            }
+            let parsed = dvfsLadder(from: dict[key])
+            guard !parsed.megahertz.isEmpty else { continue }
+            ladders.append(MetricMath.FrequencyLadder(
+                key: key,
+                megahertz: parsed.megahertz,
+                kilohertzEncoded: parsed.kilohertzEncoded
+            ))
         }
-
-        let unique = uniqueLadders(cpu)
-        var tables = DVFSTables()
-        if let slowest = unique.first, let fastest = unique.last {
-            if unique.count == 1 {
-                tables.pCPU = fastest
-            } else {
-                tables.eCPU = slowest
-                tables.pCPU = fastest
-            }
-        }
-        if !gpuSRAM.isEmpty {
-            tables.gpu = gpuSRAM
-        } else if !gpuPlain.isEmpty {
-            tables.gpu = gpuPlain
-        } else {
-            tables.gpu = gpuFallback
-        }
-        return tables
+        let classified = MetricMath.classifyFrequencyLadders(ladders)
+        return DVFSTables(eCPU: classified.efficiency, pCPU: classified.performance, gpu: classified.gpu)
     }
 
-    private static func uniqueLadders(_ ladders: [[UInt32]]) -> [[UInt32]] {
-        var seen = Set<[UInt32]>()
-        var result: [[UInt32]] = []
-        for ladder in ladders where seen.insert(ladder).inserted {
-            result.append(ladder)
-        }
-        return result.sorted { ($0.max() ?? 0) < ($1.max() ?? 0) }
-    }
-
-    private static func dvfsLadder(from value: Any?) -> [UInt32] {
-        guard let data = value as? Data, data.count >= 8 else { return [] }
+    private static func dvfsLadder(from value: Any?) -> (megahertz: [UInt32], kilohertzEncoded: Bool) {
+        guard let data = value as? Data, data.count >= 8 else { return ([], false) }
         var freqs: [UInt32] = []
+        var kilohertzEncoded = false
         data.withUnsafeBytes { raw in
             let bytes = raw.bindMemory(to: UInt8.self)
             var offset = 0
@@ -209,12 +169,15 @@ public enum HardwareInfo {
                     | UInt32(bytes[offset + 1]) << 8
                     | UInt32(bytes[offset + 2]) << 16
                     | UInt32(bytes[offset + 3]) << 24
+                if (100_000..<100_000_000).contains(rawFreq) {
+                    kilohertzEncoded = true
+                }
                 if let mhz = MetricMath.dvfsMegahertz(raw: rawFreq) {
                     freqs.append(mhz)
                 }
                 offset += 8
             }
         }
-        return freqs
+        return (freqs, kilohertzEncoded)
     }
 }
