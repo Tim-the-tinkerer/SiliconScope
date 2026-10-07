@@ -33,7 +33,6 @@ enum MemorySampler {
         let wired = UInt64(stats.wire_count)
         let compressor = UInt64(stats.compressor_page_count)
         let free = UInt64(stats.free_count)
-        let speculative = UInt64(stats.speculative_count)
         let external = UInt64(stats.external_page_count)
 
         let breakdown = MetricMath.memoryUsedBytes(
@@ -45,7 +44,8 @@ enum MemorySampler {
         )
         let swapInfo = swap()
         let cached = MetricMath.cachedFileBytes(pageSize: page, externalPages: external, purgeablePages: purgeable)
-        let freeBytes = (free + speculative) * page
+        // speculative_count is already included in free_count. Adding it again inflates Free.
+        let freeBytes = free * page
 
         return MemorySample(
             totalBytes: totalBytes,

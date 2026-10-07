@@ -7,6 +7,28 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.8] — 2026-10-07
+
+### Fixed
+
+- Launch on M1 no longer quits when a PMP energy counter has no residency states. Those rails are plain millijoule readings, and a negative state count was trapping the sampler
+- Free memory no longer counts speculative pages twice. Those pages are already inside the kernel free count
+- SMC temperatures are tried again if the first open fails, instead of staying blank for the rest of the session
+- Process names fall back to the kernel’s registered name and command when `proc_name` is empty
+- A residency channel’s integer sentinel is not treated as an energy reading
+- A core with no active residency draws an empty bar instead of a short stub
+- Temperatures no longer lists every SMC key. Those keys fill in the performance cluster, efficiency cluster, and GPU only when the chip does not publish those HID diodes. The extra Other rows were unnamed SMC keys
+- The performance-cluster row says it is the diodes on the performance cores, read together. It is not one sensor per core
+
+## [1.1.7] — 2026-10-07
+
+### Fixed
+
+- CPU frequency on M4 uses the kilohertz cluster ladders. Hertz tables that peak near 2 GHz are other domains and are no longer treated as the efficiency cores
+- Per-core labels on M4 are sequential (E0–E3 and P0–P9). A powered-off performance cluster no longer pulls the cluster frequency down to its minimum clock
+- CPU power uses the PMP energy histograms when the Energy Model CPU counters stay at zero. A sleeping cluster’s sparse bins are not counted as continuous watts
+- Temperature on M4 Pro and M2 Pro includes the SMC core and GPU sensors. Those chips do not publish the HID performance, efficiency, and GPU diodes. Duplicate PMU copies are combined, and the calibration constant is omitted
+
 ## [1.1.6] — 2026-09-27
 
 ### Fixed

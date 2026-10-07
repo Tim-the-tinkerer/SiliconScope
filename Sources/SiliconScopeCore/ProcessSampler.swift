@@ -70,9 +70,7 @@ final class ProcessSampler {
                 cpu = (delta / 1_000_000_000) / elapsed * 100
             }
 
-            var nameBuf = [CChar](repeating: 0, count: 256)
-            let nameLen = proc_name(pid, &nameBuf, UInt32(nameBuf.count))
-            let name = nameLen > 0 ? String(cString: nameBuf) : "pid \(pid)"
+            let name = processName(pid: pid, info: info)
             guard !name.isEmpty else { continue }
 
             rows.append(
@@ -88,5 +86,29 @@ final class ProcessSampler {
 
         previous = nextTicks
         return ranking.select(rows, limit: limit)
+    }
+
+    /// `proc_name` first. Kernel threads often only fill `pbi_name` or `pbi_comm`.
+    private func processName(pid: Int32, info: proc_taskallinfo) -> String {
+        var nameBuf = [CChar](repeating: 0, count: 256)
+        let nameLen = proc_name(pid, &nameBuf, UInt32(nameBuf.count))
+        if nameLen > 0 {
+            let name = String(cString: nameBuf)
+            if !name.isEmpty { return name }
+        }
+        let registered = Self.fixedCString(info.pbsd.pbi_name)
+        if !registered.isEmpty { return registered }
+        let command = Self.fixedCString(info.pbsd.pbi_comm)
+        if !command.isEmpty { return command }
+        return "pid \(pid)"
+    }
+
+    private static func fixedCString<T>(_ value: T) -> String {
+        withUnsafeBytes(of: value) { raw in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            let end = bytes.firstIndex(of: 0) ?? bytes.endIndex
+            guard end > bytes.startIndex else { return "" }
+            return String(decoding: bytes[..<end], as: UTF8.self)
+        }
     }
 }

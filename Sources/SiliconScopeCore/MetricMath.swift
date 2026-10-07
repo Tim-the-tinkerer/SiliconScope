@@ -54,6 +54,8 @@ public enum MetricMath {
         let active = residencies.dropFirst(offset).prefix(freqs.count).reduce(0.0) { $0 + Double($1.value) }
         let total = residencies.reduce(0.0) { $0 + Double($1.value) }
         let activeRatio = ratio(active, total)
+        // A core parked in DOWN/IDLE has no clock. Reporting the bottom DVFS step made a powered-off M4 cluster look busy at its minimum megahertz.
+        guard active > 0 else { return (0, 0, activeRatio) }
 
         var weighted = 0.0
         for (index, freq) in freqs.enumerated() {
@@ -87,33 +89,35 @@ public enum MetricMath {
     }
 
     public static func parseCoreID(_ channel: String) -> Int {
-        if let cpuRange = channel.range(of: "_CPU", options: .backwards) {
-            let digits = channel[cpuRange.upperBound...].prefix(while: { $0.isNumber })
-            return Int(digits) ?? 0
-        }
-        for prefix in ["PCPU", "ECPU", "MCPU"] {
-            if let range = channel.range(of: prefix) {
-                let after = channel[range.upperBound...]
-                let digits = after.prefix(while: { $0.isNumber })
-                if let value = Int(digits) { return value }
-            }
-        }
-        return 0
+        sortKey(forCPUChannel: channel).2
     }
 
+    /// Die, cluster, then core. M4 names a core `PCPU100`: cluster 1, core 0, with a trailing zero. Older names are `PCPU1` or `DIE_0_PCPU1_CPU3`.
     public static func sortKey(forCPUChannel channel: String) -> (Int, Int, Int) {
         let die = parseDieID(channel)
-        for prefix in ["PCPU", "ECPU", "MCPU"] {
-            guard let range = channel.range(of: prefix) else { continue }
-            let suffix = channel[range.upperBound...]
+        let body: Substring
+        if channel.hasPrefix("DIE_"), let split = channel.dropFirst(4).firstIndex(of: "_") {
+            body = channel[channel.index(after: split)...]
+        } else {
+            body = Substring(channel)
+        }
+        for prefix in ["PCPU", "ECPU", "MCPU", "SCPU"] {
+            guard let range = body.range(of: prefix) else { continue }
+            let suffix = body[range.upperBound...]
             if let cpu = suffix.range(of: "_CPU") {
                 let clusterText = suffix[..<cpu.lowerBound]
                 let cluster = clusterText.isEmpty ? 0 : (Int(clusterText) ?? 0)
                 let core = Int(suffix[cpu.upperBound...].prefix(while: { $0.isNumber })) ?? 0
                 return (die, cluster, core)
             }
-            let core = Int(suffix.prefix(while: { $0.isNumber })) ?? 0
-            return (die, 0, core)
+            let digits = suffix.prefix(while: { $0.isNumber })
+            if digits.count == 3, digits.last == "0" {
+                let chars = Array(digits)
+                let cluster = chars[0].wholeNumberValue ?? 0
+                let core = chars[1].wholeNumberValue ?? 0
+                return (die, cluster, core)
+            }
+            return (die, 0, Int(digits) ?? 0)
         }
         return (die, 0, 0)
     }
@@ -126,14 +130,8 @@ public enum MetricMath {
         var nextID: [Int: Int] = [:]
         return ordered.map { item in
             let die = parseDieID(item.channel)
-            let coreID: Int
-            if item.channel.contains("_CPU") {
-                let next = nextID[die] ?? 0
-                nextID[die] = next + 1
-                coreID = next
-            } else {
-                coreID = parseCoreID(item.channel)
-            }
+            let coreID = nextID[die] ?? 0
+            nextID[die] = coreID + 1
             return CoreSample(
                 kind: kind,
                 dieID: die,
@@ -153,11 +151,17 @@ public enum MetricMath {
         let count = Double(max(cores.count, expectedCount, 1))
         let scaled = cores.reduce(0.0) { $0 + $1.scaledRatio } / count
         let active = cores.reduce(0.0) { $0 + $1.activeRatio } / count
-        let averageFreq = cores.isEmpty
-            ? Double(minimumFrequencyMHz)
-            : cores.reduce(0.0) { $0 + Double($1.frequencyMHz) } / Double(cores.count)
-        let frequency = UInt32(max(averageFreq, Double(minimumFrequencyMHz)).rounded())
-        return (frequency, clamp01(scaled), clamp01(active))
+        let weight = cores.reduce(0.0) { $0 + $1.activeRatio }
+        let averageFreq: Double
+        if cores.isEmpty {
+            averageFreq = Double(minimumFrequencyMHz)
+        } else if weight > 0 {
+            // M4 Pro keeps one performance cluster powered off. An unweighted mean treats that cluster's floor clock as real work.
+            averageFreq = cores.reduce(0.0) { $0 + Double($1.frequencyMHz) * $1.activeRatio } / weight
+        } else {
+            averageFreq = 0
+        }
+        return (UInt32(averageFreq.rounded()), clamp01(scaled), clamp01(active))
     }
 
     public static func memoryUsedBytes(
@@ -247,5 +251,105 @@ public enum MetricMath {
             return 1_000_000
         }
         return 1_000
+    }
+
+    /// One `voltage-states*` ladder from the power manager, already decoded to MHz.
+    public struct FrequencyLadder: Equatable, Sendable {
+        public var key: String
+        public var megahertz: [UInt32]
+        /// M4 and later store CPU clusters in kilohertz. M1–M3 store hertz, and so do the non-CPU domains that sit beside the M4 tables.
+        public var kilohertzEncoded: Bool
+
+        public init(key: String, megahertz: [UInt32], kilohertzEncoded: Bool) {
+            self.key = key
+            self.megahertz = megahertz
+            self.kilohertzEncoded = kilohertzEncoded
+        }
+    }
+
+    /// The slowest CPU ladder is the efficiency cluster and the fastest is the performance cluster.
+    /// When any kilohertz ladder reaches a CPU clock, those are the clusters: an M4 Pro also publishes hertz tables that peak near 2 GHz and are not CPU cores.
+    /// Chips with only hertz tables (M1–M3) keep every ladder that peaks at 2 GHz or more.
+    public static func classifyFrequencyLadders(
+        _ ladders: [FrequencyLadder]
+    ) -> (efficiency: [UInt32], performance: [UInt32], gpu: [UInt32]) {
+        let cpuClock: UInt32 = 2_000
+        let cpuCandidates = ladders.filter { ($0.megahertz.max() ?? 0) >= cpuClock }
+        let kilohertz = cpuCandidates.filter(\.kilohertzEncoded)
+        let cpuSource = kilohertz.isEmpty ? cpuCandidates : kilohertz
+        let unique = uniqueFrequencyLadders(cpuSource.map(\.megahertz))
+        let efficiency: [UInt32]
+        let performance: [UInt32]
+        if let slowest = unique.first, let fastest = unique.last {
+            if unique.count == 1 {
+                efficiency = []
+                performance = fastest
+            } else {
+                efficiency = slowest
+                performance = fastest
+            }
+        } else {
+            efficiency = []
+            performance = []
+        }
+        return (efficiency, performance, gpuFrequencyLadder(ladders))
+    }
+
+    /// A PMP energy histogram bin such as `0.250W` or `  2W`.
+    public static func wattBin(_ name: String) -> Double? {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard let unit = trimmed.last, unit == "W" || unit == "w" else { return nil }
+        let number = trimmed.dropLast().trimmingCharacters(in: .whitespaces)
+        guard let value = Double(number), value.isFinite, value >= 0 else { return nil }
+        return value
+    }
+
+    /// Weighted watt-seconds and the sample count for one power rail. Nil when the channel is not a watt histogram.
+    public static func powerHistogram(
+        _ residencies: [(name: String, value: Int64)]
+    ) -> (weighted: Double, events: Double)? {
+        var weighted = 0.0
+        var events = 0.0
+        var labeled = false
+        for state in residencies {
+            guard let watts = wattBin(state.name) else { continue }
+            labeled = true
+            let count = Double(max(0, state.value))
+            weighted += watts * count
+            events += count
+        }
+        guard labeled else { return nil }
+        return (weighted, events)
+    }
+
+    /// Sum of rail averages. A sleeping M4 cluster records only a few bins, so each rail is scaled to the busiest rail's sample count and the gap counts as zero watts.
+    public static func normalizedHistogramWatts(_ rails: [(weighted: Double, events: Double)]) -> Double? {
+        let active = rails.filter { $0.events > 0 }
+        guard !active.isEmpty else { return rails.isEmpty ? nil : 0 }
+        let span = active.map(\.events).max() ?? 0
+        guard span > 0 else { return 0 }
+        return active.reduce(0.0) { $0 + ($1.weighted / span) }
+    }
+
+    private static func uniqueFrequencyLadders(_ ladders: [[UInt32]]) -> [[UInt32]] {
+        var seen = Set<[UInt32]>()
+        var result: [[UInt32]] = []
+        for ladder in ladders where seen.insert(ladder).inserted {
+            result.append(ladder)
+        }
+        return result.sorted { ($0.max() ?? 0) < ($1.max() ?? 0) }
+    }
+
+    private static func gpuFrequencyLadder(_ ladders: [FrequencyLadder]) -> [UInt32] {
+        if let sram = ladders.first(where: { $0.key == "voltage-states9-sram" && !$0.megahertz.isEmpty }) {
+            return sram.megahertz
+        }
+        if let plain = ladders.first(where: { $0.key == "voltage-states9" && !$0.megahertz.isEmpty }) {
+            return plain.megahertz
+        }
+        return ladders
+            .filter { !$0.megahertz.isEmpty && ($0.megahertz.max() ?? 0) < 2_000 }
+            .max(by: { ($0.megahertz.max() ?? 0) < ($1.megahertz.max() ?? 0) })?
+            .megahertz ?? []
     }
 }

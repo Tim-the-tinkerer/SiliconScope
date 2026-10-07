@@ -28,6 +28,7 @@ enum Sysctl {
         name.withCString { cName -> T? in
             let value = UnsafeMutablePointer<T>.allocate(capacity: 1)
             defer { value.deallocate() }
+            memset(value, 0, MemoryLayout<T>.size)
             var size = MemoryLayout<T>.size
             guard sysctlbyname(cName, value, &size, nil, 0) == 0 else { return nil }
             return value.pointee

@@ -7,7 +7,7 @@ public struct SampleRequest: Equatable, Sendable {
     public var includeProcesses: Bool
     /// Which column chooses the rows. Name and memory keep the whole list.
     public var processRanking: ProcessRanking
-    /// HID thermal discovery is throttled internally; force a read for one-shot CLI samples.
+    /// Thermal discovery is throttled internally; force a read for one-shot CLI samples.
     public var forceTemperature: Bool
 
     public init(

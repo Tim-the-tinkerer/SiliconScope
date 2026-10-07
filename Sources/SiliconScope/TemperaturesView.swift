@@ -87,8 +87,21 @@ struct TemperaturesView: View {
             low: low,
             high: high,
             count: values.count,
+            note: Self.note(for: title),
             sources: sensors.map(\.name).sorted().joined(separator: "\n")
         )
+    }
+
+    /// The cluster rows are several diodes on one cluster. The count is not the number of cores.
+    private static func note(for title: String) -> String? {
+        switch title {
+        case "Performance cluster":
+            return "Diodes on the performance cores, read as one cluster"
+        case "Efficiency cluster":
+            return "Diodes on the efficiency cores, read as one cluster"
+        default:
+            return nil
+        }
     }
 
     private func clusterRow(_ cluster: ClusterReading) -> some View {
@@ -101,7 +114,7 @@ struct TemperaturesView: View {
                 Text(cluster.detail)
                     .font(AppTheme.micro)
                     .foregroundStyle(AppTheme.muted)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             meter(cluster.celsius)
@@ -148,12 +161,14 @@ private struct ClusterReading: Identifiable {
     var low: Double
     var high: Double
     var count: Int
+    var note: String?
     var sources: String
 
     var detail: String {
         let countText = count == 1 ? "1 sensor" : "\(count) sensors"
-        guard count > 1 else { return countText }
-        return "\(countText) · \(MetricFormat.temperature(low))–\(MetricFormat.temperature(high))"
+        let range = count > 1 ? " · \(MetricFormat.temperature(low))–\(MetricFormat.temperature(high))" : ""
+        guard let note else { return countText + range }
+        return "\(note) · \(countText)\(range)"
     }
 }
 

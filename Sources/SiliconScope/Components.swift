@@ -362,10 +362,10 @@ struct CoreBarRow: View {
                     Capsule().fill(AppTheme.faint)
                     Capsule()
                         .fill(color.opacity(0.35))
-                        .frame(width: max(4, geo.size.width * core.activeRatio))
+                        .frame(width: barWidth(geo.size.width, core.activeRatio, minimum: 4))
                     Capsule()
                         .fill(color)
-                        .frame(width: max(3, geo.size.width * core.scaledRatio))
+                        .frame(width: barWidth(geo.size.width, core.scaledRatio, minimum: 3))
                 }
             }
             .frame(height: 8)
@@ -378,6 +378,12 @@ struct CoreBarRow: View {
                 .foregroundStyle(AppTheme.muted)
                 .frame(width: 72, alignment: .trailing)
         }
+    }
+
+    /// A core at rest draws no bar. A tiny non-zero share still gets a visible stub.
+    private func barWidth(_ full: CGFloat, _ ratio: Double, minimum: CGFloat) -> CGFloat {
+        guard ratio > 0 else { return 0 }
+        return max(minimum, full * ratio)
     }
 }
 
