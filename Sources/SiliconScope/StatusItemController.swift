@@ -9,6 +9,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var menuIsOpen = false
     private var liveTimer: Timer?
+    private var hoverTimer: Timer?
+    private var hoverCard: StatusHoverCard?
+    /// Set when the pointer enters the extra. Cleared as soon as it leaves.
+    private var pointerEnteredAt: TimeInterval?
+    /// After the dropdown closes, keep the card hidden until the pointer leaves and comes back.
+    private var suppressHoverUntilExit = false
     var onOpenWindow: () -> Void = {}
     var onOpenSettings: () -> Void = {}
 
@@ -59,6 +65,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             button.setAccessibilityTitle("Silicon Scope")
             button.setAccessibilityRole(.button)
             button.setAccessibilityHelp("Processor, graphics, memory, temperatures, and estimated Neural Engine activity. Click for details.")
+            // Do not assign button.toolTip. On macOS 27 a status-item tooltip can stay
+            // on screen after the pointer leaves, and each new string moves that window
+            // to the pointer. The hover card is anchored to this extra and closes on exit.
+            button.toolTip = nil
         }
         let menu = NSMenu()
         menu.delegate = self
@@ -66,10 +76,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         item.menu = menu
         self.item = item
         refreshButton()
+        startHoverTimer()
     }
 
     private func remove() {
         stopLiveTimer()
+        stopHoverTimer()
         menuIsOpen = false
         if let item {
             NSStatusBar.system.removeStatusItem(item)
@@ -83,6 +95,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         menuIsOpen = true
+        suppressHoverUntilExit = true
+        hoverCard?.hide()
         startLiveTimer()
         updateLiveItems(menu)
     }
@@ -108,11 +122,89 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         liveTimer = nil
     }
 
+    private func startHoverTimer() {
+        stopHoverTimer()
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.updateHoverCard()
+            }
+        }
+        timer.tolerance = 0.05
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
+    }
+
+    private func stopHoverTimer() {
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+        pointerEnteredAt = nil
+        suppressHoverUntilExit = false
+        hoverCard?.hide()
+        hoverCard = nil
+    }
+
     private func refresh() {
         refreshButton()
         if menuIsOpen, let menu = item?.menu {
             updateLiveItems(menu)
         }
+        updateHoverCard()
+    }
+
+    /// Show the detail card only while the pointer is resting on this extra.
+    /// Checked on a short timer so it does not wait for the next sample to close.
+    private func updateHoverCard() {
+        guard let window = item?.button?.window else {
+            pointerEnteredAt = nil
+            hoverCard?.hide()
+            return
+        }
+        let inside = StatusHoverPlacement.contains(NSEvent.mouseLocation, itemFrame: window.frame)
+        if !inside {
+            pointerEnteredAt = nil
+            suppressHoverUntilExit = false
+            hoverCard?.hide()
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if pointerEnteredAt == nil {
+            pointerEnteredAt = now
+        }
+        let hoveredFor = now - (pointerEnteredAt ?? now)
+        let show = StatusHoverPlacement.shouldShow(
+            pointerInside: true,
+            menuOpen: menuIsOpen,
+            suppressedUntilExit: suppressHoverUntilExit,
+            hoveredFor: hoveredFor
+        )
+        guard show, let screen = window.screen ?? Self.screen(containing: window.frame) else {
+            hoverCard?.hide()
+            return
+        }
+        let card = hoverCard ?? StatusHoverCard()
+        hoverCard = card
+        card.show(text: detailText(), itemFrame: window.frame, visibleFrame: screen.visibleFrame)
+    }
+
+    private static func screen(containing frame: CGRect) -> NSScreen? {
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        return NSScreen.screens.first { $0.frame.contains(center) }
+    }
+
+    private func detailText() -> String {
+        let snap = store.latest
+        return MetricFormat.menuBarTooltip(
+            cpu: snap.cpuActiveRatio,
+            gpu: snap.gpuActiveRatio,
+            memory: snap.memory.usedRatio,
+            ane: store.aneActivity(),
+            cpuWatts: snap.cpuPowerWatts,
+            gpuWatts: snap.gpuPowerWatts,
+            aneWatts: snap.anePowerWatts,
+            pressure: snap.memory.pressure,
+            cpuTemp: TemperatureName.cpuClusterAverage(snap.sensors),
+            gpuTemp: snap.gpuTempC
+        )
     }
 
     private func refreshButton() {
@@ -128,22 +220,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             cpuTemp: cpuTemp,
             gpuTemp: snap.gpuTempC
         )
-        button.toolTip = MetricFormat.menuBarTooltip(
-            cpu: snap.cpuActiveRatio,
-            gpu: snap.gpuActiveRatio,
-            memory: snap.memory.usedRatio,
-            ane: ane,
-            cpuWatts: snap.cpuPowerWatts,
-            gpuWatts: snap.gpuPowerWatts,
-            aneWatts: snap.anePowerWatts,
-            pressure: snap.memory.pressure,
-            cpuTemp: cpuTemp,
-            gpuTemp: snap.gpuTempC
-        )
-        button.setAccessibilityValue(button.toolTip ?? "")
-        // Don't resize the extra while the menu is tracking — that can dismiss it.
-        if !menuIsOpen {
-            item?.length = Self.fittedLength(for: button.attributedTitle)
+        if button.toolTip != nil {
+            button.toolTip = nil
+        }
+        button.setAccessibilityValue(detailText())
+        // Don't resize while the menu is open (that dismisses it) or while the
+        // pointer is over the extra (the item would shift under the pointer).
+        let pointerOverExtra = button.window.map {
+            StatusHoverPlacement.contains(NSEvent.mouseLocation, itemFrame: $0.frame)
+        } ?? false
+        if !menuIsOpen && !pointerOverExtra {
+            let fitted = Self.fittedLength(for: button.attributedTitle)
+            if abs((item?.length ?? 0) - fitted) > 0.5 {
+                item?.length = fitted
+            }
         }
     }
 

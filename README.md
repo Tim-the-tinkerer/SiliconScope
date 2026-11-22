@@ -1,6 +1,6 @@
 # Silicon Scope
 
-**Version 1.1.8** — a native macOS monitor for Apple Silicon CPU, GPU, unified memory, and the Apple Neural Engine.
+**Version 1.1.9** — a native macOS monitor for Apple Silicon CPU, GPU, unified memory, and the Apple Neural Engine.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
 
@@ -41,7 +41,7 @@ chmod +x build-app.sh
 ./build-app.sh
 ```
 
-This compiles a **1.1.8** release binary, packages `SiliconScope.app`, ad-hoc codesigns it, and launches it.
+This compiles a **1.1.9** release binary, packages `SiliconScope.app`, ad-hoc codesigns it, and launches it.
 
 Build without launching:
 
@@ -78,11 +78,11 @@ Unit tests cover energy-to-watts conversion, frequency residency math, M1 and M4
 1. Open **Silicon Scope**.
 2. Watch the overview tiles, or press **⌘1–⌘9** to jump to the first nine pages.
 3. **Silicon Scope → Settings…** (⌘,) for polling interval, open at login, open window at launch, and the menu bar extra. The sidebar interval picker and gear also open those controls. **⌘P** pauses sampling.
-4. A menu bar extra shows `CPU 42% 36° GPU 32% 30° MEM 60% ANE ~0%`. The CPU temperature is the average of the performance-cluster and efficiency-cluster readings. The GPU temperature is the average of the GPU sensors. On chips without the HID cluster diodes, those averages come from the SMC performance, efficiency, and GPU keys. Click the extra for a key to those names, plus watts, or **Settings…**. Toggle with **View → Show Menu Bar Extra** (⌘B) or in Settings. While the extra is on, there is no Dock icon; close the window and the extra keeps running. Turn the extra off to put the app back in the Dock.
+4. A menu bar extra shows `CPU 42% 36° GPU 32% 30° MEM 60% ANE ~0%`. The CPU temperature is the average of the performance-cluster and efficiency-cluster readings. The GPU temperature is the average of the GPU sensors. On chips without the HID cluster diodes, those averages come from the SMC performance, efficiency, and GPU keys. Hover the extra for CPU, GPU, memory, and Neural Engine detail. That card stays under the extra and closes when the pointer leaves. Click the extra for the same key, plus watts, or **Settings…**. Toggle with **View → Show Menu Bar Extra** (⌘B) or in Settings. While the extra is on, there is no Dock icon; close the window and the extra keeps running. Turn the extra off to put the app back in the Dock.
 
 The Neural Engine graph stays at zero until something actually uses it (Core ML, Photos, on-device dictation, and similar). **Watts are measured** energy-model data. **Activity percent is estimated** as ANE power divided by a typical peak for the chip — an activity indicator, not literal ANE occupancy. The interface marks that percent with a tilde (`ANE ~37%`).
 
-The header shows the telemetry mode (**Full IOReport**, **Partial IOReport**, or **CPU fallback**). Before the first reading it says **Sampling**. Individual metrics are labeled Measured, Estimated, Partial, or Unavailable — Hardware has the full table, including DRAM and GPU SRAM. Chip power (CPU + GPU + ANE) is Measured only when all three energy channels exist; otherwise it is Partial or Unavailable. A stuck-at-zero aggregate rail falls through to the cluster counters. Process lists are collected only while that page is open. Temperature updates about every 3 seconds. The Temperatures page lists the HID sensors, not only the CPU and GPU averages. SMC keys for the performance cluster, efficiency cluster, and GPU are added only when the chip does not publish those diodes. Sensor names are written in plain language, such as Performance cluster, Package, and Storage channel. Sensors of the same kind are shown as one reading: one efficiency cluster, one performance cluster, one GPU, one package, and so on. A cluster row is the diodes on that cluster read together, not one sensor per core. The small line under each name is that note, the sensor count, and the range. Hover a row to see Apple’s original sensor id.
+The header shows the telemetry mode (**Full IOReport**, **Partial IOReport**, or **CPU fallback**). Before the first reading it says **Sampling**. Individual metrics are labeled Measured, Estimated, Partial, or Unavailable — Hardware has the full table, including DRAM and GPU SRAM. Chip power (CPU + GPU + ANE) is Measured only when all three energy channels exist; otherwise it is Partial or Unavailable. A stuck-at-zero aggregate rail falls through to the cluster counters. Process lists are collected only while that page is open. Temperature updates about every 3 seconds. The Temperatures page lists the HID sensors, not only the CPU and GPU averages. SMC keys for the performance cluster, efficiency cluster, and GPU are added only when the chip does not publish those diodes. Sensor names are written in plain language, such as Performance cluster, Package, and Storage channel. Sensors of the same kind are shown as one reading: one efficiency cluster, one performance cluster, one GPU, one package, and so on. A cluster row is the diodes on that cluster read together, not one sensor per core. The small line under each name is that note, the sensor count, and the range. Hover a row and the original sensor ids are listed under it. That list is part of the row, and it disappears when the pointer leaves.
 
 Cluster letters come from the Mac (`hw.perflevel` names): Efficiency (E), Performance (P), and Super (S) on chips that have them. Frequency tables are read from the power-manager registry. M1–M3 store those steps in hertz. M4 and later store the CPU clusters in kilohertz and also publish hertz tables for other parts of the chip. Silicon Scope uses the kilohertz ladders for the CPU when those reach a CPU clock, and turns either encoding into MHz. Pages scroll when the window is shorter than the dashboard.
 

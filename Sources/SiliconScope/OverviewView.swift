@@ -187,7 +187,7 @@ struct OverviewView: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .top)
-        .help("Open \(page.title)")
+        .accessibilityHint("Open \(page.title)")
     }
 
     private func fact(_ label: String, _ value: String, _ color: Color) -> some View {

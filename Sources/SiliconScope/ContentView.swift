@@ -85,7 +85,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(AppTheme.muted)
-                .help("About Silicon Scope")
+                .accessibilityLabel("About Silicon Scope")
                 Button {
                     AppDelegate.shared.showSettings()
                 } label: {
@@ -94,7 +94,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(AppTheme.muted)
-                .help("Settings")
+                .accessibilityLabel("Settings")
             }
             .padding(.horizontal, 14)
             .padding(.top, 14)

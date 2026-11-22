@@ -39,7 +39,7 @@ struct TemperaturesView: View {
                     Panel(title: group.title, accessory: panelAccessory(group, rows)) {
                         VStack(spacing: 8) {
                             ForEach(readings(from: rows)) { cluster in
-                                clusterRow(cluster)
+                                ClusterRowView(cluster: cluster)
                             }
                         }
                     }
@@ -104,24 +104,51 @@ struct TemperaturesView: View {
         }
     }
 
-    private func clusterRow(_ cluster: ClusterReading) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(cluster.title)
-                    .font(AppTheme.small)
-                    .foregroundStyle(AppTheme.ink)
-                    .lineLimit(1)
-                Text(cluster.detail)
+}
+
+/// Sensor ids appear in the row while the pointer is over it.
+/// This is not a system tooltip, so the list cannot stay on screen after the pointer leaves.
+private struct ClusterRowView: View {
+    var cluster: ClusterReading
+    @State private var showsSources = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(cluster.title)
+                        .font(AppTheme.small)
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(1)
+                    Text(cluster.detail)
+                        .font(AppTheme.micro)
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                meter(cluster.celsius)
+                reading(cluster.celsius)
+            }
+            if showsSources && !cluster.sources.isEmpty {
+                Text(cluster.sources)
                     .font(AppTheme.micro)
                     .foregroundStyle(AppTheme.muted)
-                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            meter(cluster.celsius)
-            reading(cluster.celsius)
         }
         .padding(.vertical, 4)
-        .help(cluster.sources)
+        .contentShape(Rectangle())
+        .onContinuousHover { phase in
+            if case .active = phase {
+                showsSources = true
+            } else {
+                showsSources = false
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(cluster.sources)
     }
 
     private func meter(_ celsius: Double) -> some View {

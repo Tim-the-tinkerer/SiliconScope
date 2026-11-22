@@ -99,7 +99,7 @@ struct DiskView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Storage details and SMART")
+            .accessibilityHint("Storage details and SMART")
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(AppTheme.faint)

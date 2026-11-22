@@ -3,11 +3,11 @@ import SwiftUI
 
 struct AboutView: View {
     private var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.8"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.9"
     }
 
     private var build: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "19"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "20"
     }
 
     var body: some View {

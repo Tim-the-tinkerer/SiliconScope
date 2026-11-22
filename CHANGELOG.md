@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.9] — 2026-11-21
+
+### Fixed
+
+- The menu bar extra’s hover card closes when the pointer leaves. Rewriting the system tooltip on every sample was leaving that window on screen, where it followed the pointer until Silicon Scope quit
+- The other system tooltips are gone too. About, Settings, the Overview cards, the disk rows, and the View menu no longer use one. Hovering a temperature row lists the original sensor ids in the row, and that list disappears when the pointer leaves
+
 ## [1.1.8] — 2026-10-07
 
 ### Fixed

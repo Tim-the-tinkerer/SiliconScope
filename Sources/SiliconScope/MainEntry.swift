@@ -279,7 +279,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             action: #selector(toggleMenuBar(_:)),
             keyEquivalent: "b"
         )
-        menuBarItem.toolTip = "Live CPU, GPU, temperatures, memory, and Neural Engine in the menu bar. When on, Silicon Scope stays out of the Dock."
+        // Accessibility help only. A menu-item toolTip uses the same system tooltip
+        // window that can stay on screen after the pointer leaves on macOS 27.
+        menuBarItem.setAccessibilityHelp("Live CPU, GPU, temperatures, memory, and Neural Engine in the menu bar. When on, Silicon Scope stays out of the Dock.")
 
         let editItem = NSMenuItem()
         mainMenu.addItem(editItem)
