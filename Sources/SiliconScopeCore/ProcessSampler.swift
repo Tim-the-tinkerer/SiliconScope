@@ -4,6 +4,27 @@ import Foundation
 import Darwin.libproc
 #endif
 
+/// Activity Monitor's Memory column. `pti_resident_size` leaves out compressed pages, so Chronicle and Firefox look far too small.
+enum ProcessMemory {
+    private typealias ProcPidRusage = @convention(c) (Int32, Int32, UnsafeMutableRawPointer) -> Int32
+
+    /// Swift imports `proc_pid_rusage` as a pointer to a pointer. The call wants the address of the struct.
+    private static let readUsage: ProcPidRusage? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "proc_pid_rusage") else { return nil }
+        return unsafeBitCast(symbol, to: ProcPidRusage.self)
+    }()
+
+    static func footprint(pid: Int32, resident: UInt64) -> UInt64 {
+        guard let readUsage else { return resident }
+        var info = rusage_info_v4()
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            readUsage(pid, RUSAGE_INFO_V4, UnsafeMutableRawPointer(pointer))
+        }
+        guard result == 0, info.ri_phys_footprint > 0 else { return resident }
+        return info.ri_phys_footprint
+    }
+}
+
 final class ProcessSampler {
     private struct Tick {
         var user: UInt64
@@ -65,20 +86,19 @@ final class ProcessSampler {
                 // Same process as last sample. A counter that moves backwards is ignored rather than wrapped.
                 let userDelta = tick.user >= last.user ? tick.user - last.user : 0
                 let systemDelta = tick.system >= last.system ? tick.system - last.system : 0
-                let delta = Double(userDelta) + Double(systemDelta)
-                // These proc counters are already nanoseconds. Do not scale them by the Mach timebase.
-                cpu = (delta / 1_000_000_000) / elapsed * 100
+                cpu = MetricMath.processCPUPercent(deltaTicks: userDelta + systemDelta, elapsed: elapsed)
             }
 
             let name = processName(pid: pid, info: info)
             guard !name.isEmpty else { continue }
 
+            let resident = UInt64(info.ptinfo.pti_resident_size)
             rows.append(
                 ProcessSample(
                     pid: pid,
                     name: name,
                     cpuPercent: max(0, cpu),
-                    memoryBytes: UInt64(info.ptinfo.pti_resident_size),
+                    memoryBytes: ProcessMemory.footprint(pid: pid, resident: resident),
                     threadCount: Int(info.ptinfo.pti_threadnum)
                 )
             )

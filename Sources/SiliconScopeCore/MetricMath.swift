@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum MetricMath {
@@ -5,6 +6,43 @@ public enum MetricMath {
     public static func counterRate(current: UInt64, previous: UInt64, elapsed: TimeInterval) -> Double {
         guard elapsed > 0, current >= previous else { return 0 }
         return Double(current - previous) / elapsed
+    }
+
+    /// `proc_pidinfo` task times are Mach absolute-time ticks. Intel uses one nanosecond per tick. Apple Silicon uses 125/3.
+    public static func cpuSeconds(ticks: UInt64, numer: UInt32, denom: UInt32) -> TimeInterval {
+        guard ticks > 0, numer > 0, denom > 0 else { return 0 }
+        return Double(ticks) * Double(numer) / Double(denom) / 1_000_000_000
+    }
+
+    public static func cpuSeconds(ticks: UInt64) -> TimeInterval {
+        cpuSeconds(ticks: ticks, numer: MachTimebase.numer, denom: MachTimebase.denom)
+    }
+
+    /// Scheduler usage weighted by the clock the core was actually running. One core at its top frequency is 1.
+    public static func schedulerScaledRatio(active: Double, frequencyMHz: UInt32, maximumMHz: UInt32) -> Double {
+        guard active > 0, frequencyMHz > 0, maximumMHz > 0 else { return 0 }
+        let clock = min(1, Double(frequencyMHz) / Double(maximumMHz))
+        return min(active, active * clock)
+    }
+
+    /// Link status from `ifmediareq.ifm_status`. A valid inactive bit means the cable or association is down, even when `IFF_RUNNING` is set.
+    public static func linkIsUp(running: Bool, mediaStatus: Int32) -> Bool {
+        let valid = Int32(IFM_AVALID)
+        let active = Int32(IFM_ACTIVE)
+        guard mediaStatus & valid != 0 else { return running }
+        return mediaStatus & active != 0
+    }
+
+    /// One full core for the whole interval is 100. A process on several cores can pass 100.
+    public static func processCPUPercent(deltaTicks: UInt64, elapsed: TimeInterval, numer: UInt32, denom: UInt32) -> Double {
+        guard elapsed > 0 else { return 0 }
+        let percent = cpuSeconds(ticks: deltaTicks, numer: numer, denom: denom) / elapsed * 100
+        guard percent.isFinite else { return 0 }
+        return max(0, percent)
+    }
+
+    public static func processCPUPercent(deltaTicks: UInt64, elapsed: TimeInterval) -> Double {
+        processCPUPercent(deltaTicks: deltaTicks, elapsed: elapsed, numer: MachTimebase.numer, denom: MachTimebase.denom)
     }
 
     public static func ratio(_ numerator: Double, _ denominator: Double) -> Double {
@@ -352,4 +390,17 @@ public enum MetricMath {
             .max(by: { ($0.megahertz.max() ?? 0) < ($1.megahertz.max() ?? 0) })?
             .megahertz ?? []
     }
+}
+
+private enum MachTimebase {
+    static let scale: (numer: UInt32, denom: UInt32) = {
+        var info = mach_timebase_info_data_t(numer: 1, denom: 1)
+        if mach_timebase_info(&info) != KERN_SUCCESS || info.numer == 0 || info.denom == 0 {
+            return (1, 1)
+        }
+        return (info.numer, info.denom)
+    }()
+
+    static var numer: UInt32 { scale.numer }
+    static var denom: UInt32 { scale.denom }
 }

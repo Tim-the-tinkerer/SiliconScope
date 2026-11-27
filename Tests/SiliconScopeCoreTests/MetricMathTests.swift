@@ -378,4 +378,36 @@ final class MetricMathTests: XCTestCase {
         XCTAssertEqual(cores.map(\.coreID), [0, 1, 2])
         XCTAssertEqual(cores.map(\.frequencyMHz), [1000, 1100, 2000])
     }
+
+    func testProcessCPUUsesMachTimebase() {
+        // One core for one second. Apple Silicon records that as 24,000,000 ticks (125/3 ns each).
+        let appleSiliconTicks: UInt64 = 24_000_000
+        XCTAssertEqual(
+            MetricMath.processCPUPercent(deltaTicks: appleSiliconTicks, elapsed: 1, numer: 125, denom: 3),
+            100,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            MetricMath.cpuSeconds(ticks: appleSiliconTicks, numer: 125, denom: 3),
+            1,
+            accuracy: 0.000001
+        )
+        // Intel's timebase is one nanosecond per tick, so the same count is only 2.4% of a core.
+        XCTAssertEqual(
+            MetricMath.processCPUPercent(deltaTicks: appleSiliconTicks, elapsed: 1, numer: 1, denom: 1),
+            2.4,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(MetricMath.processCPUPercent(deltaTicks: 1_000_000_000, elapsed: 1, numer: 1, denom: 1), 100, accuracy: 0.001)
+        XCTAssertEqual(MetricMath.processCPUPercent(deltaTicks: 48_000_000, elapsed: 1, numer: 125, denom: 3), 200, accuracy: 0.001)
+        XCTAssertEqual(MetricMath.processCPUPercent(deltaTicks: 24_000_000, elapsed: 0, numer: 125, denom: 3), 0)
+        XCTAssertEqual(MetricMath.cpuSeconds(ticks: 0, numer: 125, denom: 3), 0)
+    }
+
+    func testSchedulerScaledRatioFollowsClock() {
+        XCTAssertEqual(MetricMath.schedulerScaledRatio(active: 0.5, frequencyMHz: 3204, maximumMHz: 3204), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(MetricMath.schedulerScaledRatio(active: 0.5, frequencyMHz: 1602, maximumMHz: 3204), 0.25, accuracy: 0.0001)
+        XCTAssertEqual(MetricMath.schedulerScaledRatio(active: 0, frequencyMHz: 3204, maximumMHz: 3204), 0)
+        XCTAssertEqual(MetricMath.schedulerScaledRatio(active: 0.4, frequencyMHz: 0, maximumMHz: 3204), 0)
+    }
 }

@@ -31,7 +31,7 @@ public final class SystemSampler {
     private let processes = ProcessSampler()
     private let network = NetworkSampler()
     private let disks = DiskMonitor()
-    private let cpuFallback = CPUUsageSampler()
+    private let cpuUsage = CPUUsageSampler()
 
     public init(hardware: HardwareProfile = HardwareInfo.load()) {
         self.hardware = hardware
@@ -75,6 +75,7 @@ public final class SystemSampler {
 
         if let reading = ioReport?.sample(interval: request.interval) {
             apply(reading, to: &snapshot)
+            applySchedulerUsage(cpuUsage.sample(hardware: hardware), to: &snapshot)
             cpuResidency = reading.sawCPUResidency
             gpuResidency = reading.sawGPUResidency
             cpuEnergy = reading.sawCPUEnergy
@@ -85,7 +86,7 @@ public final class SystemSampler {
             usedIOReport = true
         } else {
             Thread.sleep(forTimeInterval: request.interval)
-            let cores = cpuFallback.sample(hardware: hardware)
+            let cores = cpuUsage.sample(hardware: hardware)
             apply(cores: cores, to: &snapshot)
             cpuResidency = !cores.isEmpty
             usedIOReport = false
@@ -158,6 +159,53 @@ public final class SystemSampler {
             reading.cpuPowerWatts + reading.gpuPowerWatts + reading.anePowerWatts,
             0
         )
+    }
+
+    /// Performance-state residency counts time a core is merely clocked. Activity Monitor counts scheduler time, which is lower.
+    private func applySchedulerUsage(_ usage: [CoreSample], to snapshot: inout Snapshot) {
+        guard !usage.isEmpty else { return }
+        let grouped = Dictionary(grouping: usage) { "\($0.kind.rawValue)#\($0.coreID)" }
+        func usageRatio(for core: CoreSample) -> Double? {
+            let matches = grouped["\(core.kind.rawValue)#\(core.coreID)"] ?? []
+            guard matches.count == 1 else { return nil }
+            return matches[0].activeRatio
+        }
+        func retune(_ cores: [CoreSample], maximumMHz: UInt32) -> [CoreSample] {
+            cores.map { core in
+                guard let active = usageRatio(for: core) else { return core }
+                var copy = core
+                copy.activeRatio = active
+                copy.scaledRatio = MetricMath.schedulerScaledRatio(
+                    active: active,
+                    frequencyMHz: core.frequencyMHz,
+                    maximumMHz: maximumMHz
+                )
+                return copy
+            }
+        }
+        let efficiency = retune(snapshot.efficiencyCores, maximumMHz: hardware.eCoreFrequenciesMHz.last ?? 0)
+        let performance = retune(snapshot.performanceCores, maximumMHz: hardware.pCoreFrequenciesMHz.last ?? 0)
+        let eAgg = MetricMath.aggregateCluster(
+            efficiency,
+            expectedCount: hardware.eCoreCount,
+            minimumFrequencyMHz: hardware.eCoreFrequenciesMHz.first ?? 0
+        )
+        let pAgg = MetricMath.aggregateCluster(
+            performance,
+            expectedCount: hardware.pCoreCount,
+            minimumFrequencyMHz: hardware.pCoreFrequenciesMHz.first ?? 0
+        )
+        let cores = efficiency + performance
+        let total = Double(max(cores.count, hardware.cpuCoreCount, 1))
+        snapshot.cores = cores
+        snapshot.eClusterFrequencyMHz = eAgg.frequencyMHz
+        snapshot.eClusterScaledRatio = eAgg.scaledRatio
+        snapshot.eClusterActiveRatio = eAgg.activeRatio
+        snapshot.pClusterFrequencyMHz = pAgg.frequencyMHz
+        snapshot.pClusterScaledRatio = pAgg.scaledRatio
+        snapshot.pClusterActiveRatio = pAgg.activeRatio
+        snapshot.cpuScaledRatio = MetricMath.clamp01(cores.reduce(0) { $0 + $1.scaledRatio } / total)
+        snapshot.cpuActiveRatio = MetricMath.clamp01(cores.reduce(0) { $0 + $1.activeRatio } / total)
     }
 
     private func apply(cores: [CoreSample], to snapshot: inout Snapshot) {

@@ -31,6 +31,7 @@ struct ProcessDetailView: View {
                         fact("System time", MetricFormat.duration(detail.systemTime))
                         fact("Threads", "\(detail.runningThreads) running / \(detail.threadCount)")
                         fact("Priority", "\(detail.priority) · nice \(detail.nice)")
+                        fact("Memory", MetricFormat.bytes(detail.footprintBytes))
                         fact("Resident", MetricFormat.bytes(detail.residentBytes))
                         fact("Virtual", MetricFormat.bytes(detail.virtualBytes))
                         fact("Open files", "\(detail.openFiles)")

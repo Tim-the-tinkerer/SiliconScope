@@ -13,15 +13,15 @@ The window has these pages:
 | Page | Contents |
 |------|----------|
 | Overview | Four live gauges with history charts, stacked package power, memory mix, and basic temperature, network, and disk readings |
-| CPU | Cluster residency (E, P, or S), frequency, per-core bars, power and temperature |
+| CPU | Cluster usage (E, P, or S), frequency, per-core bars, power and temperature. Usage is scheduler time, the same figure Activity Monitor shows |
 | GPU | Active and frequency-scaled residency, DVFS frequency, GPU power |
 | Memory | Used / app / wired / compressed / cached / free, swap, pressure history |
 | Neural Engine | Energy-model watts (measured) and estimated activity — not occupancy (ANE is idle until a model runs) |
 | Power | Stacked CPU + GPU + ANE watts plus DRAM / GPU SRAM |
 | Temperatures | HID sensors, grouped into CPU, GPU, and other. SMC cluster and GPU keys appear only when those diodes are missing |
-| Network | Download and upload rates, a three-minute chart, and each active interface. The total is Wi-Fi and Ethernet. A VPN is listed and counted only when those links are down |
+| Network | Download and upload rates, a three-minute chart, and each Wi-Fi and Ethernet port. A port with no link is down and stays out of the total. A VPN is listed and counted only when Wi-Fi and Ethernet are down |
 | Disk | Internal, external, and network drives, with free space and the volumes mounted on each. Click a drive for storage details and SMART data when the drive reports it |
-| Processes | Highest CPU consumers by default. Search by name or PID. Column headers sort by name, PID, CPU, memory, or threads. Name and memory keep that order instead of jumping back to CPU. Click a row for path, owner, parent, CPU time, and memory. Right-click to copy, reveal in Finder, quit, or force quit (sampled only while this page is open) |
+| Processes | Highest CPU consumers by default. Search by name or PID. Column headers sort by name, PID, CPU, memory, or threads. Memory is the physical footprint. Name and memory keep that order instead of jumping back to CPU. Click a row for path, owner, parent, CPU time, and memory. Right-click to copy, reveal in Finder, quit, or force quit (sampled only while this page is open) |
 | Hardware | Chip identity, core counts, DVFS tables, telemetry mode and per-metric confidence |
 
 History charts keep the last **three minutes**, regardless of the 0.5 / 1 / 2 s sample interval.
@@ -71,7 +71,7 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 swift test
 ```
 
-Unit tests cover energy-to-watts conversion, frequency residency math, M1 and M4 DVFS ladder selection, power-histogram normalization, DVFS unit decoding, cluster letters, ANE activity estimates, telemetry confidence, time-windowed history, formatters, channel parsing, SMC temperature names, and that repeated samples do not accumulate memory.
+Unit tests cover energy-to-watts conversion, frequency residency math, M1 and M4 DVFS ladder selection, power-histogram normalization, DVFS unit decoding, cluster letters, ANE activity estimates, telemetry confidence, time-windowed history, formatters, channel parsing, SMC temperature names, process CPU time on Apple Silicon, and that repeated samples do not accumulate memory.
 
 ## Usage
 

@@ -1,3 +1,4 @@
+import Darwin
 import SiliconScopeCore
 import XCTest
 
@@ -20,6 +21,13 @@ final class NetworkTests: XCTestCase {
         let totals = interfaces.networkTotals()
         XCTAssertEqual(totals.downloadBytesPerSecond, 80)
         XCTAssertEqual(totals.uploadBytesPerSecond, 20)
+    }
+
+    func testUnpluggedPortIsDownEvenWhenTheInterfaceIsRunning() {
+        XCTAssertFalse(MetricMath.linkIsUp(running: true, mediaStatus: Int32(IFM_AVALID)))
+        XCTAssertTrue(MetricMath.linkIsUp(running: true, mediaStatus: Int32(IFM_AVALID | IFM_ACTIVE)))
+        XCTAssertTrue(MetricMath.linkIsUp(running: true, mediaStatus: 0))
+        XCTAssertFalse(MetricMath.linkIsUp(running: false, mediaStatus: 0))
     }
 
     func testBridgeIsNeverAddedToTheTotal() {

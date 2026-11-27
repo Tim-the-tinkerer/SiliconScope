@@ -14,6 +14,11 @@ final class NetworkSampler {
     private var addresses: [String: [String]] = [:]
     private var describedNames: Set<String> = []
     private var describedAt = Date.distantPast
+    private var mediaSocket: Int32 = -1
+
+    deinit {
+        if mediaSocket >= 0 { close(mediaSocket) }
+    }
 
     func sample() -> NetworkSample {
         let now = Date()
@@ -43,18 +48,19 @@ final class NetworkSampler {
                 up = 0
             }
             let flags = entry.flags
-            let isUp = (flags & Int(IFF_UP)) != 0
-            let isRunning = (flags & Int(IFF_RUNNING)) != 0
+            let administrativelyUp = (flags & Int(IFF_UP)) != 0
+            let running = (flags & Int(IFF_RUNNING)) != 0
+            let linkUp = linkIsActive(entry.name, running: running)
             let interfaceAddresses = addresses[entry.name] ?? []
             let carriesTraffic = down > 0 || up > 0
             let visible = kind == .wifi || kind == .ethernet || !interfaceAddresses.isEmpty || carriesTraffic
-            guard (isUp || carriesTraffic), visible else { continue }
+            guard (administrativelyUp || carriesTraffic), visible else { continue }
             interfaces.append(NetworkInterfaceSample(
                 id: entry.name,
                 name: entry.name,
                 displayName: description?.displayName ?? kind.title,
                 kind: kind,
-                isUp: isRunning,
+                isUp: linkUp,
                 addresses: interfaceAddresses,
                 downloadBytesPerSecond: down,
                 uploadBytesPerSecond: up
@@ -91,6 +97,29 @@ final class NetworkSampler {
     private struct Description {
         var displayName: String
         var kind: NetworkKind
+    }
+
+    /// `IFF_RUNNING` stays set on an unplugged Ethernet port. The media bit is the carrier.
+    /// `SIOCGIFMEDIA` is hidden from Swift, so this is `_IOWR('i', 56, 44)` and the status `Int32` sits at offset 24.
+    private func linkIsActive(_ name: String, running: Bool) -> Bool {
+        if mediaSocket < 0 {
+            mediaSocket = socket(AF_INET, SOCK_DGRAM, 0)
+        }
+        guard mediaSocket >= 0 else { return running }
+        var buffer = [UInt8](repeating: 0, count: 44)
+        for (index, byte) in name.utf8.prefix(Int(IFNAMSIZ) - 1).enumerated() {
+            buffer[index] = byte
+        }
+        let ok = buffer.withUnsafeMutableBytes { raw -> Bool in
+            guard let base = raw.baseAddress else { return false }
+            return ioctl(mediaSocket, UInt(0xC02C_6938), base) == 0
+        }
+        guard ok else { return running }
+        let bits = UInt32(buffer[24])
+            | UInt32(buffer[25]) << 8
+            | UInt32(buffer[26]) << 16
+            | UInt32(buffer[27]) << 24
+        return MetricMath.linkIsUp(running: running, mediaStatus: Int32(bitPattern: bits))
     }
 
     private static func readCounters() -> [RawInterface] {

@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Process CPU on Apple Silicon follows the Mach timebase. Those task counters are ticks, so a busy app such as Chronicle was shown at about one fortieth of its real usage. The CPU time in the detail panel uses the same conversion
+- CPU usage follows the scheduler, the same figure as Activity Monitor. Performance-state residency was counting time a core was merely clocked, so the gauge sat above the real busy time
+- Process memory is the physical footprint. Resident size left out compressed pages, so Chronicle, Terminal, and Firefox showed a much smaller Memory figure than Activity Monitor
+- An Ethernet port with no link is down. Those ports stay in the list, and they no longer count as an up link, which kept VPN traffic out of the total while every real link was unplugged
+
 ## [1.1.9] — 2026-11-21
 
 ### Fixed

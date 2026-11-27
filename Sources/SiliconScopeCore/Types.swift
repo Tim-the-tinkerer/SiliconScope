@@ -474,6 +474,7 @@ public struct ProcessDetail: Equatable, Sendable {
     public var threadCount: Int
     public var runningThreads: Int
     public var priority: Int32
+    public var footprintBytes: UInt64
     public var residentBytes: UInt64
     public var virtualBytes: UInt64
     public var openFiles: Int
@@ -502,6 +503,7 @@ public struct ProcessDetail: Equatable, Sendable {
         threadCount: Int,
         runningThreads: Int,
         priority: Int32,
+        footprintBytes: UInt64,
         residentBytes: UInt64,
         virtualBytes: UInt64,
         openFiles: Int,
@@ -529,6 +531,7 @@ public struct ProcessDetail: Equatable, Sendable {
         self.threadCount = threadCount
         self.runningThreads = runningThreads
         self.priority = priority
+        self.footprintBytes = footprintBytes
         self.residentBytes = residentBytes
         self.virtualBytes = virtualBytes
         self.openFiles = openFiles

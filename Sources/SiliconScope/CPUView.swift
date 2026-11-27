@@ -8,7 +8,7 @@ struct CPUView: View {
         let snap = store.latest
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                Panel(title: "Active residency", quality: snap.confidence.cpu) {
+                Panel(title: "CPU", quality: snap.confidence.cpu) {
                     AreaHistoryChart(
                         points: ChartSeries.ratio(store.history, \.cpuActiveRatio, series: "CPU"),
                         color: AppTheme.cpu,
@@ -34,7 +34,7 @@ struct CPUView: View {
             HStack(spacing: 12) {
                 Panel(title: "\(store.hardware.pClusterName) \(store.hardware.pCoreLabel)-cluster") {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 10) {
-                        StatCell(label: "Active", value: MetricFormat.percent(snap.pClusterActiveRatio), color: AppTheme.cpu)
+                        StatCell(label: "Usage", value: MetricFormat.percent(snap.pClusterActiveRatio), color: AppTheme.cpu)
                         StatCell(label: "Scaled", value: MetricFormat.percent(snap.pClusterScaledRatio))
                         StatCell(label: "Frequency", value: MetricFormat.megahertz(snap.pClusterFrequencyMHz))
                     }
@@ -47,7 +47,7 @@ struct CPUView: View {
                 }
                 Panel(title: "\(store.hardware.eClusterName) \(store.hardware.eCoreLabel)-cluster") {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 10) {
-                        StatCell(label: "Active", value: MetricFormat.percent(snap.eClusterActiveRatio), color: AppTheme.ane)
+                        StatCell(label: "Usage", value: MetricFormat.percent(snap.eClusterActiveRatio), color: AppTheme.ane)
                         StatCell(label: "Scaled", value: MetricFormat.percent(snap.eClusterScaledRatio))
                         StatCell(label: "Frequency", value: MetricFormat.megahertz(snap.eClusterFrequencyMHz))
                     }
